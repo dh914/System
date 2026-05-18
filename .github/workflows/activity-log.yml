@@ -1,0 +1,157 @@
+name: Activity Log
+
+on:
+  push:
+  pull_request:
+    types: [opened, closed, reopened, edited, synchronize, ready_for_review, converted_to_draft, assigned, unassigned, labeled, unlabeled, review_requested, review_request_removed]
+  pull_request_review:
+    types: [submitted, edited, dismissed]
+  pull_request_review_comment:
+    types: [created, edited, deleted]
+  issues:
+    types: [opened, closed, reopened, edited, assigned, unassigned, labeled, unlabeled, milestoned, demilestoned, pinned, unpinned, locked, unlocked, transferred, deleted]
+  issue_comment:
+    types: [created, edited, deleted]
+  create:
+  delete:
+  release:
+    types: [published, unpublished, created, edited, deleted, prereleased, released]
+  fork:
+  watch:
+    types: [started]
+  star:
+    types: [created, deleted]
+  workflow_run:
+    workflows: ["*"]
+    types: [completed]
+  discussion:
+    types: [created, edited, deleted, pinned, unpinned, locked, unlocked, transferred, category_changed, answered, unanswered, labeled, unlabeled]
+  discussion_comment:
+    types: [created, edited, deleted]
+  member:
+    types: [added, removed, edited]
+  public:
+  repository:
+    types: [created, deleted, archived, unarchived, edited, renamed, transferred, publicized, privatized]
+
+concurrency:
+  group: activity-log
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  log:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Append activity entry
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          EVENT_ACTION: ${{ github.event.action }}
+          ACTOR: ${{ github.actor }}
+          REPO: ${{ github.repository }}
+          REF: ${{ github.ref }}
+          SHA: ${{ github.sha }}
+          RUN_ID: ${{ github.run_id }}
+          EVENT_PATH: ${{ github.event_path }}
+        run: |
+          set -euo pipefail
+          mkdir -p logs/events
+          TS_UTC="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+          DATE_DIR="$(date -u +'%Y/%m')"
+          DATE_FILE="$(date -u +'%Y-%m-%d')"
+          mkdir -p "logs/events/${DATE_DIR}"
+
+          SUMMARY=""
+          case "${EVENT_NAME}" in
+            push)
+              SUMMARY="ref=${REF} sha=${SHA:0:7}"
+              ;;
+            pull_request|pull_request_review|pull_request_review_comment)
+              PR_NUM="$(jq -r '.pull_request.number // .number // empty' "${EVENT_PATH}")"
+              PR_TITLE="$(jq -r '.pull_request.title // empty' "${EVENT_PATH}")"
+              SUMMARY="#${PR_NUM} ${PR_TITLE}"
+              ;;
+            issues|issue_comment)
+              ISSUE_NUM="$(jq -r '.issue.number // empty' "${EVENT_PATH}")"
+              ISSUE_TITLE="$(jq -r '.issue.title // empty' "${EVENT_PATH}")"
+              SUMMARY="#${ISSUE_NUM} ${ISSUE_TITLE}"
+              ;;
+            release)
+              TAG="$(jq -r '.release.tag_name // empty' "${EVENT_PATH}")"
+              SUMMARY="tag=${TAG}"
+              ;;
+            create|delete)
+              REFTYPE="$(jq -r '.ref_type // empty' "${EVENT_PATH}")"
+              REFNAME="$(jq -r '.ref // empty' "${EVENT_PATH}")"
+              SUMMARY="${REFTYPE}=${REFNAME}"
+              ;;
+            workflow_run)
+              WF="$(jq -r '.workflow_run.name // empty' "${EVENT_PATH}")"
+              CONCLUSION="$(jq -r '.workflow_run.conclusion // empty' "${EVENT_PATH}")"
+              SUMMARY="workflow=\"${WF}\" conclusion=${CONCLUSION}"
+              ;;
+            discussion|discussion_comment)
+              DNUM="$(jq -r '.discussion.number // empty' "${EVENT_PATH}")"
+              DTITLE="$(jq -r '.discussion.title // empty' "${EVENT_PATH}")"
+              SUMMARY="#${DNUM} ${DTITLE}"
+              ;;
+            *)
+              SUMMARY=""
+              ;;
+          esac
+
+          LINE="- ${TS_UTC} | ${EVENT_NAME}${EVENT_ACTION:+/${EVENT_ACTION}} | @${ACTOR} | ${SUMMARY}"
+          DAY_LOG="logs/events/${DATE_DIR}/${DATE_FILE}.md"
+          if [ ! -f "${DAY_LOG}" ]; then
+            echo "# Activity — ${DATE_FILE}" > "${DAY_LOG}"
+            echo "" >> "${DAY_LOG}"
+          fi
+          echo "${LINE}" >> "${DAY_LOG}"
+
+          RAW_DIR="logs/raw/${DATE_DIR}"
+          mkdir -p "${RAW_DIR}"
+          RAW_FILE="${RAW_DIR}/${TS_UTC//:/-}-${EVENT_NAME}-${RUN_ID}.json"
+          cp "${EVENT_PATH}" "${RAW_FILE}"
+
+          INDEX="logs/README.md"
+          if [ ! -f "${INDEX}" ]; then
+            cat > "${INDEX}" <<'EOF'
+          # Activity Log
+
+          Auto-populated by `.github/workflows/activity-log.yml`.
+
+          - `events/YYYY/MM/YYYY-MM-DD.md` — daily human-readable summary
+          - `raw/YYYY/MM/*.json` — full event payloads
+          EOF
+            sed -i 's/^          //' "${INDEX}"
+          fi
+
+      - name: Commit and push log
+        run: |
+          set -euo pipefail
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add logs/
+          if git diff --cached --quiet; then
+            echo "No log changes to commit."
+            exit 0
+          fi
+          git commit -m "log: ${{ github.event_name }}${{ github.event.action && format('/{0}', github.event.action) || '' }} by @${{ github.actor }}"
+          for i in 1 2 3 4 5; do
+            if git push origin HEAD:main; then
+              exit 0
+            fi
+            git pull --rebase origin main || true
+            sleep $((i*2))
+          done
+          echo "Failed to push activity log after retries" >&2
+          exit 1
