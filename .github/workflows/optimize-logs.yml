@@ -1,0 +1,120 @@
+name: Optimize Logs
+
+on:
+  schedule:
+    - cron: '17 4 * * *'
+  workflow_dispatch:
+    inputs:
+      raw_retention_days:
+        description: 'Loose raw JSON payloads older than N days are archived into a monthly tar.gz'
+        required: false
+        default: '14'
+      summary_retention_days:
+        description: 'Daily summary .md files older than N days are folded into a monthly summary'
+        required: false
+        default: '60'
+
+concurrency:
+  group: optimize-logs
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  optimize:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout default branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Archive old raw payloads
+        env:
+          RAW_RETENTION: ${{ github.event.inputs.raw_retention_days || '14' }}
+        run: |
+          set -euo pipefail
+          if [ ! -d logs/raw ]; then
+            echo "No raw logs to optimize."
+            exit 0
+          fi
+          CUTOFF_EPOCH=$(date -u -d "${RAW_RETENTION} days ago" +%s)
+          CUTOFF_YM=$(date -u -d "${RAW_RETENTION} days ago" +'%Y/%m')
+          # For each YYYY/MM directory strictly older than the cutoff month, archive then remove loose JSONs.
+          find logs/raw -mindepth 2 -maxdepth 2 -type d | sort | while read -r DIR; do
+            YM="${DIR#logs/raw/}"
+            # Compare YYYY/MM lexicographically against cutoff YYYY/MM
+            if [ "${YM}" \< "${CUTOFF_YM}" ]; then
+              ARCHIVE="logs/raw/${YM}.tar.gz"
+              if [ -n "$(ls -A "${DIR}" 2>/dev/null)" ]; then
+                echo "Archiving ${DIR} -> ${ARCHIVE}"
+                tar -czf "${ARCHIVE}" -C "logs/raw" "${YM}"
+                rm -rf "${DIR}"
+                # Clean up empty year dir if applicable
+                YEAR_DIR="$(dirname "${DIR}")"
+                rmdir "${YEAR_DIR}" 2>/dev/null || true
+              fi
+            fi
+          done
+
+      - name: Fold old daily summaries into monthly summary
+        env:
+          SUMMARY_RETENTION: ${{ github.event.inputs.summary_retention_days || '60' }}
+        run: |
+          set -euo pipefail
+          if [ ! -d logs/events ]; then
+            echo "No event summaries to optimize."
+            exit 0
+          fi
+          CUTOFF_DATE=$(date -u -d "${SUMMARY_RETENTION} days ago" +'%Y-%m-%d')
+          find logs/events -type f -name '*.md' | sort | while read -r F; do
+            BASENAME="$(basename "${F}" .md)"
+            # Skip files that aren't dated YYYY-MM-DD
+            case "${BASENAME}" in
+              [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]) ;;
+              *) continue ;;
+            esac
+            if [ "${BASENAME}" \< "${CUTOFF_DATE}" ]; then
+              YM_DIR="$(dirname "${F}")"
+              MONTHLY="${YM_DIR}/summary.md"
+              if [ ! -f "${MONTHLY}" ]; then
+                echo "# Monthly summary — $(basename "$(dirname "${YM_DIR}")")/$(basename "${YM_DIR}")" > "${MONTHLY}"
+                echo "" >> "${MONTHLY}"
+              fi
+              {
+                echo "## ${BASENAME}"
+                tail -n +2 "${F}"
+                echo ""
+              } >> "${MONTHLY}"
+              rm -f "${F}"
+            fi
+          done
+
+      - name: Run git gc
+        run: |
+          git gc --aggressive --prune=now || true
+
+      - name: Commit and push optimizations
+        run: |
+          set -euo pipefail
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add logs/
+          if git diff --cached --quiet; then
+            echo "No optimization changes."
+            exit 0
+          fi
+          git commit -m "chore(logs): optimize storage (archive raw, fold summaries)"
+          DEFAULT_BRANCH="${{ github.event.repository.default_branch }}"
+          for i in 1 2 3 4 5; do
+            if git push origin "HEAD:${DEFAULT_BRANCH}"; then
+              exit 0
+            fi
+            git pull --rebase origin "${DEFAULT_BRANCH}" || true
+            sleep $((i*2))
+          done
+          echo "Failed to push optimizations after retries" >&2
+          exit 1
