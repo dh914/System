@@ -1,0 +1,9 @@
+[Unit]
+Description=Sync local System checkout with origin
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+Environment=SYSTEM_REPO_DIR=%h/System
+ExecStart=/bin/bash %h/System/scripts/sync.sh
