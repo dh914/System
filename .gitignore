@@ -1,0 +1,15 @@
+# Never commit raw private keys or decrypted secrets
+*.age
+*.agekey
+age.key
+key.txt
+secrets/*.plain.*
+secrets/*.dec.*
+secrets/*.decrypted.*
+**/age-key.txt
+**/sops-key.txt
+
+# Local env files
+.env
+.env.*
+!.env.example

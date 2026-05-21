@@ -13,6 +13,15 @@ workflow_run, discussion 등)를 감지하고, 다음 두 가지 형식으로 �
 
 각 이벤트가 발생할 때마다 `github-actions[bot]`이 `main` 브랜치에 직접 커밋·푸시합니다.
 
+## 자동 최적화
+
+`.github/workflows/optimize-logs.yml`이 매일 04:17 UTC에 실행되어 리포지토리 용량을 관리합니다.
+
+- 14일 이상 지난 `logs/raw/YYYY/MM/*.json`은 `logs/raw/YYYY/MM.tar.gz`로 압축하고 원본 삭제
+- 60일 이상 지난 `logs/events/YYYY/MM/YYYY-MM-DD.md`는 같은 디렉터리의 `summary.md`로 병합 후 원본 삭제
+- `git gc --aggressive`로 패킹 최적화
+- 보존 일수는 `workflow_dispatch` 입력값으로 즉석 조정 가능
+
 ## 주의
 
 - 로그는 자동 생성되므로 손으로 수정하지 마세요. 다음 이벤트 발생 시 머지 충돌이 발생할 수 있습니다.

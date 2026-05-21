@@ -1,0 +1,4 @@
+creation_rules:
+  - path_regex: secrets/.*\.enc\.ya?ml$
+    encrypted_regex: '^(value|password|token|key|api_key|secret|address|notes|.*_key|.*_token|.*_password)$'
+    age: age1n8p9c0r0a62p8769h3yv8reyyx98te5klccvd437w0mkn0f9l4fqjaxjy0

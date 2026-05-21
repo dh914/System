@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Install (macOS):
+    1) cp scripts/launchd/com.dh914.system-sync.plist ~/Library/LaunchAgents/
+    2) Edit the absolute paths below (REPO_DIR and ProgramArguments) to your checkout location.
+    3) launchctl unload ~/Library/LaunchAgents/com.dh914.system-sync.plist 2>/dev/null || true
+       launchctl load   ~/Library/LaunchAgents/com.dh914.system-sync.plist
+    4) Verify: launchctl list | grep com.dh914.system-sync
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.dh914.system-sync</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>/Users/CHANGEME/System/scripts/sync.sh</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>SYSTEM_REPO_DIR</key>
+    <string>/Users/CHANGEME/System</string>
+    <key>PATH</key>
+    <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+  </dict>
+  <key>StartInterval</key>
+  <integer>120</integer>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>StandardOutPath</key>
+  <string>/tmp/com.dh914.system-sync.out</string>
+  <key>StandardErrorPath</key>
+  <string>/tmp/com.dh914.system-sync.err</string>
+</dict>
+</plist>
